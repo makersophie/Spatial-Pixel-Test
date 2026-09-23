@@ -13,17 +13,17 @@ const VIDEO_CONSTRAINTS = {
 // ---------------------------------------------------------------------------
 // Supply matching
 //
-// Need cards (QR text "1", "2", "3") and resource cards ("a", "b", "c").
-// Holding the matching resource next to a need resolves it.
+// Three need cards and three resource cards. Holding the matching
+// resource next to a need resolves it.
 // ---------------------------------------------------------------------------
 
 const CARDS = {
-  '1': { kind: 'need', type: 'water', label: 'Needs water', resolved: 'Has water now' },
-  '2': { kind: 'need', type: 'light', label: 'Needs light', resolved: 'Has light now' },
-  '3': { kind: 'need', type: 'medicine', label: 'Needs medicine', resolved: 'Has medicine now' },
-  'a': { kind: 'resource', type: 'water', label: 'Drinking water' },
-  'b': { kind: 'resource', type: 'light', label: 'Lamp' },
-  'c': { kind: 'resource', type: 'medicine', label: 'Medicine' },
+  'object-a': { kind: 'need', type: 'water', label: 'Need water', resolved: 'Has water now' },
+  'object-b': { kind: 'need', type: 'medicine', label: 'Need medicine', resolved: 'Has medicine now' },
+  'object-c': { kind: 'need', type: 'light', label: 'Need light', resolved: 'Has light now' },
+  'bottle': { kind: 'resource', type: 'water', label: 'Water' },
+  'notebook': { kind: 'resource', type: 'medicine', label: 'Medicine' },
+  'phone': { kind: 'resource', type: 'light', label: 'Light' },
 };
 
 // A resource counts as "delivered" to a need when the two codes are within
@@ -416,30 +416,28 @@ function labelFor(track, now) {
     return data;
   }
 
-  const prefix = `${data.trim().toLowerCase()}: `;
-
   if (card.kind === 'resource') {
     const need = nearestNeed(track);
     if (!need) {
       track.pairTarget = null;
     }
     if (need && need.card.type === track.card.type && heldFor(track, need, now) < HOLD_MS) {
-      return `${prefix}${card.label} - delivering...`;
+      return `${card.label} - delivering...`;
     }
-    return prefix + card.label;
+    return card.label;
   }
 
   const resource = resourceFor(track);
   if (!resource) {
-    return prefix + card.label;
+    return card.label;
   }
   if (resource.card.type !== card.type) {
-    return `${prefix}${card.label} - that's not what I need`;
+    return `${card.label} - that's not what I need`;
   }
   if (heldFor(resource, track, now) >= HOLD_MS) {
-    return prefix + card.resolved;
+    return card.resolved;
   }
-  return prefix + card.label;
+  return card.label;
 }
 
 // The need card within range of this resource card, closest first.
