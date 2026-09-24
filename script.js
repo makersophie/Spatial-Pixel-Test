@@ -6,6 +6,8 @@ const VIDEO_CONSTRAINTS = {
   video: {
     width: { ideal: 1920 },
     height: { ideal: 1080 },
+    // Prefer the rear camera on phones; laptops ignore this.
+    facingMode: { ideal: 'environment' },
   },
   audio: false,
 };
@@ -13,27 +15,22 @@ const VIDEO_CONSTRAINTS = {
 // ---------------------------------------------------------------------------
 // Supply matching
 //
-// Three need cards and three resource cards. Holding the matching
-// resource next to a need resolves it.
+// Three need cards and three resource cards. A need card is matched while
+// its resource card is anywhere in the frame.
 // ---------------------------------------------------------------------------
 
+// Keys are the text inside the printed QR codes; `name` is the label shown.
 const CARDS = {
-  'object-a': { kind: 'need', type: 'water', label: 'Need water', resolved: 'Has water now' },
-  'object-b': { kind: 'need', type: 'medicine', label: 'Need medicine', resolved: 'Has medicine now' },
-  'object-c': { kind: 'need', type: 'light', label: 'Need light', resolved: 'Has light now' },
-  'bottle': { kind: 'resource', type: 'water', label: 'Water' },
-  'notebook': { kind: 'resource', type: 'medicine', label: 'Medicine' },
-  'phone': { kind: 'resource', type: 'light', label: 'Light' },
+  'object-a': { name: 'need-water', kind: 'need', type: 'water' },
+  'object-c': { name: 'need-light', kind: 'need', type: 'light' },
+  'object-b': { name: 'need-medicine', kind: 'need', type: 'medicine' },
+  'bottle': { name: 'water', kind: 'resource', type: 'water' },
+  'phone': { name: 'light', kind: 'resource', type: 'light' },
+  'notebook': { name: 'medicine', kind: 'resource', type: 'medicine' },
 };
 
-// A resource counts as "delivered" to a need when the two codes are within
-// this many code-widths of each other. Measuring in code-widths (instead of
-// pixels) keeps the rule the same whether the cards are near or far from
-// the camera.
-const MATCH_RANGE = 2;
-// How long a correct pair has to stay together before the need is resolved,
-// so a card sliding past doesn't trigger it by accident.
-const HOLD_MS = 700;
+const NEED_COLOR = '#ff0000';
+const MATCHED_COLOR = '#00ff00';
 
 function parseCard(text) {
   return CARDS[text.trim().toLowerCase()] ?? null;
@@ -398,89 +395,68 @@ function cornersOf(location) {
 // Matching and rendering
 // ---------------------------------------------------------------------------
 
+const thanksLayer = document.getElementById('thanks');
+const thanksElements = new Map();
+
 function render(now) {
   pruneTracks(now);
 
   overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+  const shown = new Set();
   for (const track of tracks) {
-    drawBox(track.location);
-    drawLabel(track.location, labelFor(track, now));
+    const matched = isMatched(track);
+    const color = track.card?.kind === 'need' && !matched ? NEED_COLOR : MATCHED_COLOR;
+    drawBox(track.location, color);
+    drawLabel(track.location, track.card?.name ?? track.data);
+
+    if (matched) {
+      showThanks(track);
+      shown.add(track.id);
+    }
+  }
+
+  for (const [id, element] of thanksElements) {
+    if (!shown.has(id)) {
+      element.remove();
+      thanksElements.delete(id);
+    }
   }
 
   requestAnimationFrame(render);
 }
 
-function labelFor(track, now) {
-  const { data, card } = track;
-  if (!card) {
-    return data;
+// A need card is matched while its resource card is anywhere in the frame.
+function isMatched(track) {
+  if (track.card?.kind !== 'need') {
+    return false;
   }
-
-  if (card.kind === 'resource') {
-    const need = nearestNeed(track);
-    if (!need) {
-      track.pairTarget = null;
-    }
-    if (need && need.card.type === track.card.type && heldFor(track, need, now) < HOLD_MS) {
-      return `${card.label} - delivering...`;
-    }
-    return card.label;
-  }
-
-  const resource = resourceFor(track);
-  if (!resource) {
-    return card.label;
-  }
-  if (resource.card.type !== card.type) {
-    return `${card.label} - that's not what I need`;
-  }
-  if (heldFor(resource, track, now) >= HOLD_MS) {
-    return card.resolved;
-  }
-  return card.label;
+  return tracks.some((other) => other.card?.kind === 'resource' && other.card.type === track.card.type);
 }
 
-// The need card within range of this resource card, closest first.
-function nearestNeed(resource) {
-  let nearest = null;
-  let nearestDistance = Infinity;
-
-  for (const need of tracks) {
-    if (need.card?.kind !== 'need') {
-      continue;
-    }
-    const distance = Math.hypot(need.center.x - resource.center.x, need.center.y - resource.center.y);
-    const range = MATCH_RANGE * (need.size + resource.size) / 2;
-    if (distance < range && distance < nearestDistance) {
-      nearest = need;
-      nearestDistance = distance;
-    }
+// The image is a DOM element over the video (not drawn into the canvas) so
+// animated GIFs keep playing. It sits in the centre of the screen, clear of
+// the code, and is rotated to follow the need card's angle.
+function showThanks(track) {
+  let element = thanksElements.get(track.id);
+  if (!element) {
+    element = document.createElement('figure');
+    element.className = 'thanks';
+    element.innerHTML = '<img src="thank-you.jpg" alt="">';
+    thanksLayer.appendChild(element);
+    thanksElements.set(track.id, element);
   }
 
-  return nearest;
+  // The video is scaled uniformly (object-fit: cover), so the code's angle in
+  // the frame is the same as on screen.
+  const { topLeftCorner, topRightCorner } = track.location;
+  const angle = Math.atan2(topRightCorner.y - topLeftCorner.y, topRightCorner.x - topLeftCorner.x);
+  element.style.transform = `rotate(${angle}rad)`;
 }
 
-// The resource card currently delivering to this need card, if any. A
-// matching resource wins over a wrong one when both are nearby.
-function resourceFor(need) {
-  const candidates = tracks.filter((track) => track.card?.kind === 'resource' && nearestNeed(track) === need);
-  return candidates.find((track) => track.card.type === need.card.type) ?? candidates[0] ?? null;
-}
-
-// How long `resource` has been paired with `need`. Restarts whenever the
-// resource moves to a different need.
-function heldFor(resource, need, now) {
-  if (resource.pairTarget !== need.id) {
-    resource.pairTarget = need.id;
-    resource.pairStart = now;
-  }
-  return now - resource.pairStart;
-}
-
-function drawBox(location) {
+function drawBox(location, color) {
   const { topLeftCorner, topRightCorner, bottomRightCorner, bottomLeftCorner } = location;
 
-  overlayCtx.strokeStyle = '#00ff00';
+  overlayCtx.strokeStyle = color;
   overlayCtx.lineWidth = Math.max(4, overlay.width * 0.006);
   overlayCtx.beginPath();
   overlayCtx.moveTo(topLeftCorner.x, topLeftCorner.y);
