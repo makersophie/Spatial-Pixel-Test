@@ -31,6 +31,8 @@ const CARDS = {
 
 const NEED_COLOR = '#ff0000';
 const MATCHED_COLOR = '#00ff00';
+const ANCHOR_COLOR = '#ffcc00';
+const MAP_COLOR = 'rgba(0, 200, 255, 0.9)';
 
 function parseCard(text) {
   return CARDS[text.trim().toLowerCase()] ?? null;
@@ -392,6 +394,123 @@ function cornersOf(location) {
 }
 
 // ---------------------------------------------------------------------------
+// Map calibration
+//
+// The printed map (map.html) has a QR anchor at each corner. While all four
+// are in frame, a homography is fitted from their centres in the frame to
+// their known positions on the floor plan, so any code in the frame can be
+// placed on the map. The last fit is kept when an anchor is briefly hidden
+// (e.g. by a hand), on the assumption that the map and camera stay put.
+// ---------------------------------------------------------------------------
+
+let frameToMap = null;
+let mapToFrame = null;
+let calibrationLive = false;
+
+function updateCalibration() {
+  const frame = [];
+  const map = [];
+  for (const [text, position] of Object.entries(MAP.anchors)) {
+    const track = tracks.find((t) => t.data.trim().toLowerCase() === text);
+    if (!track) {
+      calibrationLive = false;
+      return;
+    }
+    frame.push(quadCenter(track.location));
+    map.push(position);
+  }
+
+  const forward = solveHomography(frame, map);
+  const inverse = solveHomography(map, frame);
+  calibrationLive = Boolean(forward && inverse);
+  if (calibrationLive) {
+    frameToMap = forward;
+    mapToFrame = inverse;
+  }
+}
+
+// Under perspective the average of the corners drifts off-centre, but the
+// diagonals still cross at the true centre of the code.
+function quadCenter(location) {
+  const [a, b, c, d] = cornersOf(location);
+  const denom = (a.x - c.x) * (b.y - d.y) - (a.y - c.y) * (b.x - d.x);
+  if (Math.abs(denom) < 1e-9) {
+    return centerOf(location);
+  }
+  const t = ((a.x - b.x) * (b.y - d.y) - (a.y - b.y) * (b.x - d.x)) / denom;
+  return { x: a.x + t * (c.x - a.x), y: a.y + t * (c.y - a.y) };
+}
+
+// Fits the 3x3 matrix H (with H[2][2] = 1) mapping four `src` points onto
+// four `dst` points, by solving the standard 8x8 linear system.
+function solveHomography(src, dst) {
+  const rows = [];
+  for (let i = 0; i < 4; i++) {
+    const { x, y } = src[i];
+    const { x: u, y: v } = dst[i];
+    rows.push([x, y, 1, 0, 0, 0, -u * x, -u * y, u]);
+    rows.push([0, 0, 0, x, y, 1, -v * x, -v * y, v]);
+  }
+
+  // Gaussian elimination with partial pivoting.
+  for (let col = 0; col < 8; col++) {
+    let pivot = col;
+    for (let r = col + 1; r < 8; r++) {
+      if (Math.abs(rows[r][col]) > Math.abs(rows[pivot][col])) {
+        pivot = r;
+      }
+    }
+    if (Math.abs(rows[pivot][col]) < 1e-9) {
+      return null;
+    }
+    [rows[col], rows[pivot]] = [rows[pivot], rows[col]];
+
+    for (let r = 0; r < 8; r++) {
+      if (r !== col) {
+        const factor = rows[r][col] / rows[col][col];
+        for (let k = col; k < 9; k++) {
+          rows[r][k] -= factor * rows[col][k];
+        }
+      }
+    }
+  }
+
+  const h = rows.map((row, i) => row[8] / row[i]);
+  return [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], 1];
+}
+
+function applyHomography(h, { x, y }) {
+  const w = h[6] * x + h[7] * y + h[8];
+  return {
+    x: (h[0] * x + h[1] * y + h[2]) / w,
+    y: (h[3] * x + h[4] * y + h[5]) / w,
+  };
+}
+
+// Where a track sits on the floor plan, and which room that is.
+function placeOnMap(track) {
+  if (!frameToMap) {
+    return null;
+  }
+  const point = applyHomography(frameToMap, track.center);
+  return { point, zone: zoneAt(point) };
+}
+
+// Location queries, handy from the console:
+//   whereIs('need-water')   -> 'kitchen'
+//   whoIsIn('mouse hole')   -> ['bottle', ...] or [] if empty
+function whereIs(name) {
+  const track = tracks.find((t) => (t.card?.name ?? t.data) === name);
+  return track ? placeOnMap(track)?.zone ?? null : null;
+}
+
+function whoIsIn(zone) {
+  return tracks
+    .filter((t) => !isMapAnchor(t.data) && placeOnMap(t)?.zone === zone)
+    .map((t) => t.card?.name ?? t.data);
+}
+
+// ---------------------------------------------------------------------------
 // Matching and rendering
 // ---------------------------------------------------------------------------
 
@@ -400,14 +519,24 @@ const thanksElements = new Map();
 
 function render(now) {
   pruneTracks(now);
+  updateCalibration();
 
   overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+  drawMap();
+
   const shown = new Set();
   for (const track of tracks) {
+    if (isMapAnchor(track.data)) {
+      drawBox(track.location, ANCHOR_COLOR);
+      continue;
+    }
+
     const matched = isMatched(track);
     const color = track.card?.kind === 'need' && !matched ? NEED_COLOR : MATCHED_COLOR;
     drawBox(track.location, color);
-    drawLabel(track.location, track.card?.name ?? track.data);
+    const name = track.card?.name ?? track.data;
+    const zone = placeOnMap(track)?.zone;
+    drawLabel(track.location, zone ? `${name} @ ${zone}` : name);
 
     if (matched) {
       showThanks(track);
@@ -451,6 +580,35 @@ function showThanks(track) {
   const { topLeftCorner, topRightCorner } = track.location;
   const angle = Math.atan2(topRightCorner.y - topLeftCorner.y, topRightCorner.x - topLeftCorner.x);
   element.style.transform = `rotate(${angle}rad)`;
+}
+
+// Outlines the floor plan and its rooms on top of the video, so it's easy to
+// see whether the calibration lines up. Dashed once an anchor is out of view.
+function drawMap() {
+  if (!mapToFrame) {
+    return;
+  }
+
+  overlayCtx.save();
+  overlayCtx.strokeStyle = MAP_COLOR;
+  overlayCtx.lineWidth = Math.max(2, overlay.width * 0.003);
+  overlayCtx.setLineDash(calibrationLive ? [] : [12, 8]);
+
+  const rects = [{ x: 0, y: 0, width: MAP.width, height: MAP.height }, ...MAP.zones];
+  for (const rect of rects) {
+    const corners = [
+      { x: rect.x, y: rect.y },
+      { x: rect.x + rect.width, y: rect.y },
+      { x: rect.x + rect.width, y: rect.y + rect.height },
+      { x: rect.x, y: rect.y + rect.height },
+    ].map((p) => applyHomography(mapToFrame, p));
+
+    overlayCtx.beginPath();
+    corners.forEach((p, i) => (i === 0 ? overlayCtx.moveTo(p.x, p.y) : overlayCtx.lineTo(p.x, p.y)));
+    overlayCtx.closePath();
+    overlayCtx.stroke();
+  }
+  overlayCtx.restore();
 }
 
 function drawBox(location, color) {
