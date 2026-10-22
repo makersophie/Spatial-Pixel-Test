@@ -570,47 +570,6 @@ function reactionFor(track, zone) {
   return PLACE_REACTIONS[kind][zone] ?? null;
 }
 
-// Short synthesised jingles, as [frequency Hz, seconds] notes.
-const SOUNDS = {
-  sneak: [[660, 0.08], [880, 0.08], [660, 0.08]],
-  home: [[523, 0.15], [659, 0.15], [784, 0.3]],
-  scared: [[220, 0.12], [208, 0.12], [196, 0.35]],
-  cook: [[440, 0.1], [0, 0.05], [440, 0.1]],
-  fix: [[300, 0.07], [0, 0.07], [300, 0.07], [0, 0.07], [300, 0.07]],
-  relax: [[392, 0.35], [330, 0.45]],
-  gameover: [[392, 0.2], [330, 0.2], [262, 0.6]],
-  happy: [[784, 0.1], [988, 0.1], [1175, 0.1], [1568, 0.25]],
-};
-
-// Browsers only allow audio after the user interacts with the page, so the
-// first tap or click anywhere turns sound on.
-let audio = null;
-window.addEventListener('pointerdown', () => {
-  audio ??= new AudioContext();
-  audio.resume();
-});
-
-function playSound(name) {
-  if (!audio || audio.state !== 'running') {
-    return;
-  }
-  let at = audio.currentTime;
-  for (const [frequency, duration] of SOUNDS[name]) {
-    if (frequency > 0) {
-      const osc = audio.createOscillator();
-      const gain = audio.createGain();
-      osc.type = 'square';
-      osc.frequency.value = frequency;
-      gain.gain.setValueAtTime(0.08, at);
-      gain.gain.exponentialRampToValueAtTime(0.001, at + duration);
-      osc.connect(gain).connect(audio.destination);
-      osc.start(at);
-      osc.stop(at + duration);
-    }
-    at += duration;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Matching and rendering
 // ---------------------------------------------------------------------------
@@ -630,6 +589,7 @@ function render(now) {
   // Cards that already showed a meeting this frame, so their partner doesn't
   // repeat the same bubble and sound.
   const met = [];
+  const characters = [];
   for (const track of tracks) {
     if (isMapAnchor(track.data)) {
       drawBox(track.location, ANCHOR_COLOR);
@@ -646,7 +606,8 @@ function render(now) {
     const reaction = reactionFor(track, zone);
     const partnerShown = reaction?.shared &&
       met.some((other) => other.reaction === reaction && isNear(other, track));
-    if (reaction && reaction !== track.reaction && !partnerShown) {
+    // A paired map screen plays the sounds itself.
+    if (reaction && reaction !== track.reaction && !partnerShown && !displayLink) {
       playSound(reaction.sound);
     }
     track.reaction = reaction;
@@ -657,6 +618,21 @@ function render(now) {
       }
     }
     gameOver ||= reaction === CAUGHT;
+
+    const onMap = placeOnMap(track);
+    if (onMap && (track.card?.kind === 'mouse' || track.card?.kind === 'human')) {
+      characters.push({
+        id: track.id,
+        name,
+        kind: track.card.kind,
+        x: onMap.point.x,
+        y: onMap.point.y,
+        radius: mapRadius(track),
+        zone,
+        bubble: reaction && !partnerShown ? reaction.text : null,
+        sound: reaction?.sound ?? null,
+      });
+    }
 
     if (matched) {
       showThanks(track);
@@ -672,10 +648,65 @@ function render(now) {
   }
 
   if (gameOver) {
-    drawBanner('GAME OVER');
+    drawBanner(overlayCtx, 'GAME OVER');
   }
 
+  sendToDisplay({ type: 'state', calibrated: calibrationLive, gameOver, characters }, now);
+
   requestAnimationFrame(render);
+}
+
+// ---------------------------------------------------------------------------
+// Map screen link
+//
+// Opened as index.html?display=<id> (by scanning the code on display.html),
+// this page acts as the camera for a map shown on a computer screen and
+// streams what it sees there over a PeerJS data connection.
+// ---------------------------------------------------------------------------
+
+const DISPLAY_ID = new URLSearchParams(location.search).get('display');
+const SEND_INTERVAL_MS = 100;
+const RECONNECT_MS = 2000;
+
+let displayLink = null;
+let lastSentAt = 0;
+
+if (DISPLAY_ID && 'Peer' in window) {
+  const peer = new Peer();
+  const connect = () => {
+    const conn = peer.connect(DISPLAY_ID, { reliable: true });
+    conn.on('open', () => {
+      displayLink = conn;
+    });
+    conn.on('close', () => {
+      displayLink = null;
+      setTimeout(connect, RECONNECT_MS);
+    });
+  };
+  peer.on('open', connect);
+  peer.on('error', (error) => {
+    // The screen isn't up yet (or was reloaded); keep trying.
+    if (error.type === 'peer-unavailable') {
+      setTimeout(connect, RECONNECT_MS);
+    } else {
+      console.warn('Map screen link:', error);
+    }
+  });
+}
+
+function sendToDisplay(message, now) {
+  if (!displayLink?.open || now - lastSentAt < SEND_INTERVAL_MS) {
+    return;
+  }
+  lastSentAt = now;
+  displayLink.send(message);
+}
+
+// Half the card's diagonal, measured on the map, so the screen can draw a
+// ring around the card at the right size.
+function mapRadius(track) {
+  const [tl, , br] = cornersOf(track.location).map((p) => applyHomography(frameToMap, p));
+  return Math.hypot(br.x - tl.x, br.y - tl.y) / 2;
 }
 
 // A need card is matched while its resource card is anywhere in the frame.
@@ -749,50 +780,12 @@ function drawBox(location, color) {
   overlayCtx.stroke();
 }
 
-// A white speech bubble above the card, pointing down at it.
+// A speech bubble above the card, pointing down at it.
 function drawBubble(location, text) {
   const points = cornersOf(location);
   const cx = points.reduce((sum, p) => sum + p.x, 0) / 4;
   const top = Math.min(...points.map((p) => p.y));
-
-  const fontSize = Math.max(18, overlay.width * 0.022);
-  const padding = fontSize * 0.5;
-  const tail = fontSize * 0.6;
-  overlayCtx.font = `bold ${fontSize}px sans-serif`;
-  overlayCtx.textBaseline = 'middle';
-  const width = overlayCtx.measureText(text).width + padding * 2;
-  const height = fontSize + padding * 2;
-  const x = Math.min(Math.max(cx - width / 2, 0), overlay.width - width);
-  const y = Math.max(top - tail - height, 0);
-
-  overlayCtx.fillStyle = '#fff';
-  overlayCtx.strokeStyle = '#000';
-  overlayCtx.lineWidth = Math.max(2, fontSize * 0.1);
-  overlayCtx.beginPath();
-  overlayCtx.roundRect(x, y, width, height, fontSize * 0.4);
-  overlayCtx.moveTo(cx - tail * 0.6, y + height);
-  overlayCtx.lineTo(cx, y + height + tail);
-  overlayCtx.lineTo(cx + tail * 0.6, y + height);
-  overlayCtx.fill();
-  overlayCtx.stroke();
-  // Hide the bubble's bottom edge where the tail joins it.
-  overlayCtx.fillRect(cx - tail * 0.6 + overlayCtx.lineWidth, y + height - overlayCtx.lineWidth,
-    tail * 1.2 - overlayCtx.lineWidth * 2, overlayCtx.lineWidth * 2);
-
-  overlayCtx.fillStyle = '#000';
-  overlayCtx.fillText(text, x + padding, y + height / 2);
-}
-
-function drawBanner(text) {
-  const fontSize = overlay.width * 0.09;
-  overlayCtx.font = `bold ${fontSize}px sans-serif`;
-  overlayCtx.textAlign = 'center';
-  overlayCtx.textBaseline = 'middle';
-  overlayCtx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-  overlayCtx.fillRect(0, overlay.height / 2 - fontSize, overlay.width, fontSize * 2);
-  overlayCtx.fillStyle = '#ff3b30';
-  overlayCtx.fillText(text, overlay.width / 2, overlay.height / 2);
-  overlayCtx.textAlign = 'start';
+  drawSpeechBubble(overlayCtx, cx, top, text, Math.max(18, overlay.width * 0.022));
 }
 
 function drawLabel(location, text) {
