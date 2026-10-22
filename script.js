@@ -27,10 +27,11 @@ const CARDS = {
   'bottle': { name: 'water', kind: 'resource', type: 'water' },
   'phone': { name: 'light', kind: 'resource', type: 'light' },
   'notebook': { name: 'medicine', kind: 'resource', type: 'medicine' },
-  // Characters that move around the printed map (see cards.html).
-  'mouse-1': { name: 'mouse-1', kind: 'mouse' },
-  'mouse-2': { name: 'mouse-2', kind: 'mouse' },
-  'human': { name: 'human', kind: 'human' },
+  // Characters that move around the printed map (see cards.html). The
+  // printed labels (MS-01 etc.) differ from the text inside the codes.
+  'bottle-empty': { name: 'MS-01', kind: 'mouse' },
+  'bottle-half': { name: 'MS-02', kind: 'mouse' },
+  'bottle-full': { name: 'HM-01', kind: 'human' },
 };
 
 const NEED_COLOR = '#ff0000';

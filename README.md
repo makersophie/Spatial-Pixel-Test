@@ -11,7 +11,7 @@ Rooms and anchor positions live in `map.js`.
 
 ## Characters
 
-Print `cards.html` for the `mouse-1`, `mouse-2` and `human` cards and move them around the map.
+Print `cards.html` for the `MS-01`, `MS-02` (mice) and `HM-01` (human) cards and move them around the map.
 Each one reacts to the room it is in, and to meeting another character, with a speech bubble
 and a sound (tap the page once to turn sound on):
 

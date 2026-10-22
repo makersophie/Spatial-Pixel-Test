@@ -63,13 +63,13 @@
     // Cut these out and move them around on the printed map.
     // The QR text must match a key in CARDS in script.js.
     const PRINTED = [
-      { code: 'mouse-1', picture: '🐭', note: 'mouse' },
-      { code: 'mouse-2', picture: '🐁', note: 'mouse' },
-      { code: 'human', picture: '🧍', note: 'human' },
+      { code: 'bottle-empty', label: 'MS-01', picture: '🐭', note: 'mouse' },
+      { code: 'bottle-half', label: 'MS-02', picture: '🐁', note: 'mouse' },
+      { code: 'bottle-full', label: 'HM-01', picture: '🧍', note: 'human' },
     ];
 
     const container = document.getElementById('cards');
-    for (const { code, picture, note } of PRINTED) {
+    for (const { code, label, picture, note } of PRINTED) {
       const qr = qrcode(0, 'M');
       qr.addData(code);
       qr.make();
@@ -78,8 +78,8 @@
       card.className = 'card';
       card.innerHTML = `
         <div class="picture">${picture}</div>
-        <img src="${qr.createDataURL(8, 4)}" alt="QR code for ${code}">
-        <div class="name">${code}</div>
+        <img src="${qr.createDataURL(8, 4)}" alt="QR code for ${label}">
+        <div class="name">${label}</div>
         <div class="note">${note}</div>`;
       container.appendChild(card);
     }
