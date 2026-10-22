@@ -17,9 +17,11 @@ and a sound (tap the page once to turn sound on):
 
 | | Kitchen | Mouse hole | Living room |
 |---|---|---|---|
-| mouse | Food stolen! | Home sweet home. Safe! | Scared of being killed! |
-| human | Preparing food | The wall has a hole. Needs patching! | Relaxing... |
+| MS-01 | I want pizza? | Home sweet home. Safe! | Scared of being killed! |
+| MS-02 | Are there vegs? | Home sweet home. Safe! | Scared of being killed! |
+| HM-01 | Preparing Food | The wall has a hole. Needs patching! | Relaxing... |
 
+- MS-01 + MS-02 both in the kitchen (together or apart): **Food Stolen!**
 - mouse + human close together: **Caught! Game over**
 - mouse + mouse close together: **Happy happy!!!**
 
@@ -35,3 +37,13 @@ Pages site, since phone cameras need HTTPS). Point the phone at the screen so al
 codes are in view, and put the MS/HM cards on the screen. The computer draws each character's
 reaction right on the map, plus **GAME OVER** when a mouse meets the human, and plays the sounds
 (click the page once to enable them). The two devices talk directly using PeerJS.
+
+## Zones: is an object inside the zone?
+
+The camera page has three zone modes (buttons at the bottom, or keys 1-3). Each zone is drawn as an
+outline: grey while empty, filled green while a card's centre is inside it.
+
+1. **Halves**: the left and right halves of the camera view.
+2. **QR zone**: four QR codes reading `zone:<name>` (print them from `zones.html` or `print/zones.pdf`)
+   mark the corners. Same-name markers are joined into a polygon in clockwise order.
+3. **Rooms**: the kitchen, mouse hole and living room on the map, located with the map's corner codes.

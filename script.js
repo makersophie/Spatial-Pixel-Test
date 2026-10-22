@@ -29,8 +29,17 @@ const CARDS = {
   'notebook': { name: 'medicine', kind: 'resource', type: 'medicine' },
   // Characters that move around the printed map (see cards.html). The
   // printed labels (MS-01 etc.) differ from the text inside the codes.
-  'bottle-empty': { name: 'MS-01', kind: 'mouse' },
-  'bottle-half': { name: 'MS-02', kind: 'mouse' },
+  // `reactions` override PLACE_REACTIONS for that one character.
+  'bottle-empty': {
+    name: 'MS-01',
+    kind: 'mouse',
+    reactions: { 'kitchen': { text: 'I want pizza?', sound: 'pizza' } },
+  },
+  'bottle-half': {
+    name: 'MS-02',
+    kind: 'mouse',
+    reactions: { 'kitchen': { text: 'Are there vegs?', sound: 'veg' } },
+  },
   'bottle-full': { name: 'HM-01', kind: 'human' },
 };
 
@@ -516,6 +525,127 @@ function whoIsIn(zone) {
 }
 
 // ---------------------------------------------------------------------------
+// Zones
+//
+// "Is this object inside the zone?" Three ways to define a zone, switched
+// with the buttons at the bottom of the screen (or keys 1-3):
+//   halves  the left and right halves of the camera view.
+//   qr      four QR codes reading "zone:<name>" mark a zone's corners
+//           (print them from zones.html).
+//   rooms   the rooms on the floor plan, located with the map anchors.
+// Every zone becomes a polygon in frame coordinates. Its outline is grey
+// while it's empty and fills green once an object's centre is inside it.
+// ---------------------------------------------------------------------------
+
+const ZONE_PREFIX = 'zone:';
+const ZONE_MODES = ['halves', 'qr', 'rooms'];
+const ZONE_EMPTY_COLOR = 'rgba(170, 170, 170, 0.95)';
+const ZONE_FULL_COLOR = '#34c759';
+const ZONE_FULL_FILL = 'rgba(52, 199, 89, 0.3)';
+
+let zoneMode = 'rooms';
+
+function isZoneMarker(text) {
+  return text.trim().toLowerCase().startsWith(ZONE_PREFIX);
+}
+
+// Anything that isn't part of the map or a zone's corner can be in a zone.
+function isZoneObject(track) {
+  return !isMapAnchor(track.data) && !isZoneMarker(track.data);
+}
+
+function currentZones() {
+  if (zoneMode === 'halves') {
+    const w = overlay.width;
+    const h = overlay.height;
+    return [
+      { name: 'LEFT', polygon: [{ x: 0, y: 0 }, { x: w / 2, y: 0 }, { x: w / 2, y: h }, { x: 0, y: h }] },
+      { name: 'RIGHT', polygon: [{ x: w / 2, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: w / 2, y: h }] },
+    ];
+  }
+  if (zoneMode === 'qr') {
+    return qrZones();
+  }
+  if (!mapToFrame) {
+    return [];
+  }
+  return MAP.zones.map((zone) => ({
+    name: zone.name,
+    polygon: rectCorners(zone).map((p) => applyHomography(mapToFrame, p)),
+  }));
+}
+
+// Groups the "zone:<name>" markers by name. A zone appears once all four of
+// its corners are in view, joined in clockwise order around their centre.
+function qrZones() {
+  const corners = new Map();
+  for (const track of tracks) {
+    if (isZoneMarker(track.data)) {
+      const name = track.data.trim().slice(ZONE_PREFIX.length);
+      if (!corners.has(name)) {
+        corners.set(name, []);
+      }
+      corners.get(name).push(quadCenter(track.location));
+    }
+  }
+
+  const zones = [];
+  for (const [name, points] of corners) {
+    if (points.length !== 4) {
+      continue;
+    }
+    const cx = points.reduce((sum, p) => sum + p.x, 0) / 4;
+    const cy = points.reduce((sum, p) => sum + p.y, 0) / 4;
+    // y points down on screen, so increasing angle runs clockwise.
+    const polygon = [...points].sort((a, b) =>
+      Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx));
+    zones.push({ name, polygon });
+  }
+  return zones;
+}
+
+// Ray casting: count how many polygon edges a ray to the right crosses.
+function pointInPolygon(point, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i];
+    const b = polygon[j];
+    if ((a.y > point.y) !== (b.y > point.y) &&
+        point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function rectCorners(rect) {
+  return [
+    { x: rect.x, y: rect.y },
+    { x: rect.x + rect.width, y: rect.y },
+    { x: rect.x + rect.width, y: rect.y + rect.height },
+    { x: rect.x, y: rect.y + rect.height },
+  ];
+}
+
+function setZoneMode(mode) {
+  zoneMode = mode;
+  for (const button of document.querySelectorAll('#modes button')) {
+    button.classList.toggle('active', button.dataset.mode === mode);
+  }
+}
+
+for (const button of document.querySelectorAll('#modes button')) {
+  button.addEventListener('click', () => setZoneMode(button.dataset.mode));
+}
+
+window.addEventListener('keydown', (event) => {
+  const mode = ZONE_MODES[Number(event.key) - 1];
+  if (mode) {
+    setZoneMode(mode);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Reactions
 //
 // From the Spatial Computing Mouse brief: a character's reaction depends on
@@ -531,7 +661,7 @@ const PLACE_REACTIONS = {
     'living room': { text: 'Scared of being killed!', sound: 'scared' },
   },
   human: {
-    'kitchen': { text: 'Preparing food', sound: 'cook' },
+    'kitchen': { text: 'Preparing Food', sound: 'cook' },
     'mouse hole': { text: 'The wall has a hole. Needs patching!', sound: 'fix' },
     'living room': { text: 'Relaxing...', sound: 'relax' },
   },
@@ -540,6 +670,8 @@ const PLACE_REACTIONS = {
 // Meetings involve two cards but show one bubble (see render).
 const CAUGHT = { text: 'Caught! Game over', sound: 'gameover', shared: true };
 const MICE_MEET = { text: 'Happy happy!!!', sound: 'happy', shared: true };
+// Both mice in the kitchen at once, whether or not they're side by side.
+const KITCHEN_RAID = { text: 'Food Stolen!', sound: 'sneak', shared: true, anywhere: true };
 
 // Two characters "meet" when their centres are this many card widths apart.
 const MEET_DISTANCE = 2.5;
@@ -555,10 +687,16 @@ function reactionFor(track, zone) {
     return null;
   }
 
+  // Most important first: getting caught, then raiding the kitchen together,
+  // then meeting, then the room on its own.
   const others = tracks.filter((t) => t !== track && isNear(t, track));
   if (kind === 'mouse') {
     if (others.some((t) => t.card?.kind === 'human')) {
       return CAUGHT;
+    }
+    if (zone === 'kitchen' && tracks.some((t) =>
+      t !== track && t.card?.kind === 'mouse' && placeOnMap(t)?.zone === 'kitchen')) {
+      return KITCHEN_RAID;
     }
     if (others.some((t) => t.card?.kind === 'mouse')) {
       return MICE_MEET;
@@ -567,7 +705,7 @@ function reactionFor(track, zone) {
     return CAUGHT;
   }
 
-  return PLACE_REACTIONS[kind][zone] ?? null;
+  return track.card.reactions?.[zone] ?? PLACE_REACTIONS[kind][zone] ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -582,7 +720,11 @@ function render(now) {
   updateCalibration();
 
   overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
-  drawMap();
+  if (zoneMode === 'rooms') {
+    drawMap();
+  }
+  const zones = currentZones();
+  drawZones(zones);
 
   const shown = new Set();
   let gameOver = false;
@@ -591,7 +733,7 @@ function render(now) {
   const met = [];
   const characters = [];
   for (const track of tracks) {
-    if (isMapAnchor(track.data)) {
+    if (!isZoneObject(track)) {
       drawBox(track.location, ANCHOR_COLOR);
       continue;
     }
@@ -601,11 +743,16 @@ function render(now) {
     drawBox(track.location, color);
     const name = track.card?.name ?? track.data;
     const zone = placeOnMap(track)?.zone;
-    drawLabel(track.location, zone ? `${name} @ ${zone}` : name);
+    // Rooms mode names the room (hallway included); the other modes name
+    // whichever of their zones the card is in.
+    const where = zoneMode === 'rooms'
+      ? zone
+      : zones.find((z) => pointInPolygon(track.center, z.polygon))?.name;
+    drawLabel(track.location, where ? `${name} @ ${where}` : name);
 
     const reaction = reactionFor(track, zone);
     const partnerShown = reaction?.shared &&
-      met.some((other) => other.reaction === reaction && isNear(other, track));
+      met.some((other) => other.reaction === reaction && (reaction.anywhere || isNear(other, track)));
     // A paired map screen plays the sounds itself.
     if (reaction && reaction !== track.reaction && !partnerShown && !displayLink) {
       playSound(reaction.sound);
@@ -737,8 +884,9 @@ function showThanks(track) {
   element.style.transform = `rotate(${angle}rad)`;
 }
 
-// Outlines the floor plan and its rooms on top of the video, so it's easy to
-// see whether the calibration lines up. Dashed once an anchor is out of view.
+// Outlines the floor plan on top of the video, so it's easy to see whether
+// the calibration lines up. Dashed once an anchor is out of view. (The rooms
+// themselves are drawn as zones.)
 function drawMap() {
   if (!mapToFrame) {
     return;
@@ -748,22 +896,50 @@ function drawMap() {
   overlayCtx.strokeStyle = MAP_COLOR;
   overlayCtx.lineWidth = Math.max(2, overlay.width * 0.003);
   overlayCtx.setLineDash(calibrationLive ? [] : [12, 8]);
+  tracePolygon(rectCorners({ x: 0, y: 0, width: MAP.width, height: MAP.height })
+    .map((p) => applyHomography(mapToFrame, p)));
+  overlayCtx.stroke();
+  overlayCtx.restore();
+}
 
-  const rects = [{ x: 0, y: 0, width: MAP.width, height: MAP.height }, ...MAP.zones];
-  for (const rect of rects) {
-    const corners = [
-      { x: rect.x, y: rect.y },
-      { x: rect.x + rect.width, y: rect.y },
-      { x: rect.x + rect.width, y: rect.y + rect.height },
-      { x: rect.x, y: rect.y + rect.height },
-    ].map((p) => applyHomography(mapToFrame, p));
+// The zone indicator: each zone's outline, filled green while any object's
+// centre is inside it, with the zone's name in the middle.
+function drawZones(zones) {
+  const objects = tracks.filter(isZoneObject);
+  const lineWidth = Math.max(3, overlay.width * 0.004);
+  const fontSize = Math.max(16, overlay.width * 0.018);
 
-    overlayCtx.beginPath();
-    corners.forEach((p, i) => (i === 0 ? overlayCtx.moveTo(p.x, p.y) : overlayCtx.lineTo(p.x, p.y)));
-    overlayCtx.closePath();
+  overlayCtx.save();
+  for (const { name, polygon } of zones) {
+    const occupied = objects.some((track) => pointInPolygon(track.center, polygon));
+
+    tracePolygon(polygon);
+    if (occupied) {
+      overlayCtx.fillStyle = ZONE_FULL_FILL;
+      overlayCtx.fill();
+    }
+    overlayCtx.strokeStyle = occupied ? ZONE_FULL_COLOR : ZONE_EMPTY_COLOR;
+    overlayCtx.lineWidth = lineWidth;
     overlayCtx.stroke();
+
+    const cx = polygon.reduce((sum, p) => sum + p.x, 0) / polygon.length;
+    const cy = polygon.reduce((sum, p) => sum + p.y, 0) / polygon.length;
+    overlayCtx.font = `bold ${fontSize}px sans-serif`;
+    overlayCtx.textAlign = 'center';
+    overlayCtx.textBaseline = 'middle';
+    overlayCtx.lineWidth = fontSize * 0.25;
+    overlayCtx.strokeStyle = 'rgba(0, 0, 0, 0.7)';
+    overlayCtx.strokeText(name, cx, cy);
+    overlayCtx.fillStyle = occupied ? ZONE_FULL_COLOR : '#fff';
+    overlayCtx.fillText(name, cx, cy);
   }
   overlayCtx.restore();
+}
+
+function tracePolygon(points) {
+  overlayCtx.beginPath();
+  points.forEach((p, i) => (i === 0 ? overlayCtx.moveTo(p.x, p.y) : overlayCtx.lineTo(p.x, p.y)));
+  overlayCtx.closePath();
 }
 
 function drawBox(location, color) {

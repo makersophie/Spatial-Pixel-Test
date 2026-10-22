@@ -15,6 +15,9 @@ const SOUNDS = {
   relax: [[392, 0.35], [330, 0.45]],
   gameover: [[392, 0.2], [330, 0.2], [262, 0.6]],
   happy: [[784, 0.1], [988, 0.1], [1175, 0.1], [1568, 0.25]],
+  // Rising, like a question.
+  pizza: [[523, 0.1], [659, 0.1], [880, 0.2]],
+  veg: [[440, 0.1], [494, 0.1], [659, 0.2]],
 };
 
 // Browsers only allow audio after the user interacts with the page, so the
