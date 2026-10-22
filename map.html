@@ -38,10 +38,10 @@
   <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
   <script src="map.js"></script>
   <script>
-    // The sheet is the floor plan plus a margin wide enough for the anchors.
-    const MARGIN = Math.max(...Object.values(MAP.anchors).flatMap(({ x, y }) => [
+    // The sheet is the floor plan, plus a margin if any anchor sticks out.
+    const MARGIN = Math.max(0, ...Object.values(MAP.anchors).flatMap(({ x, y }) => [
       -x, -y, x - MAP.width, y - MAP.height,
-    ])) + MAP.anchorSize / 2;
+    ].map((overhang) => overhang + MAP.anchorSize / 2)));
 
     const canvas = document.createElement('canvas');
     canvas.width = MAP.width + MARGIN * 2;
@@ -65,6 +65,7 @@
     plan.src = MAP.image;
 
     // Draws a code filling `size` square pixels, including its quiet zone.
+    // The quiet zone is painted white because the code sits on the plan.
     function drawQr(text, left, top, size) {
       const qr = qrcode(0, 'M');
       qr.addData(text);
@@ -74,6 +75,8 @@
       const count = qr.getModuleCount();
       const cell = size / (count + QUIET_ZONE * 2);
 
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(left, top, size, size);
       ctx.fillStyle = '#000';
       for (let row = 0; row < count; row++) {
         for (let col = 0; col < count; col++) {
