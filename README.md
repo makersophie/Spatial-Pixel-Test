@@ -11,7 +11,7 @@ Rooms and anchor positions live in `map.js`.
 
 ## Characters
 
-Print `cards.html` for the `mouse-1`, `mouse-2` and `human` cards and move them around the map.
+Print `cards.html` for the `MS-01`, `MS-02` (mice) and `HM-01` (human) cards and move them around the map.
 Each one reacts to the room it is in, and to meeting another character, with a speech bubble
 and a sound (tap the page once to turn sound on):
 
@@ -26,3 +26,12 @@ and a sound (tap the page once to turn sound on):
 ## Print
 
 Ready-to-print PDFs (letter size, print at 100% / actual size): `print/map.pdf` and `print/cards.pdf`.
+
+## Map on a computer screen
+
+Instead of printing the map, open `display.html` on a computer and press **Fullscreen**.
+Scan the pairing code it shows with your phone: that opens the camera page (on the GitHub
+Pages site, since phone cameras need HTTPS). Point the phone at the screen so all four corner
+codes are in view, and put the MS/HM cards on the screen. The computer draws each character's
+reaction right on the map, plus **GAME OVER** when a mouse meets the human, and plays the sounds
+(click the page once to enable them). The two devices talk directly using PeerJS.

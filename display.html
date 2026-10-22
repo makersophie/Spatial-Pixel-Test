@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>map screen</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #fff;
+      font-family: sans-serif;
+    }
+    #screen {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+    #status {
+      position: absolute;
+      top: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.75);
+      color: #fff;
+      font-size: 14px;
+    }
+    #status button {
+      font: inherit;
+    }
+    #pair {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      padding: 20px;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+      text-align: center;
+      max-width: 320px;
+    }
+    #pair img {
+      width: 220px;
+      height: 220px;
+      image-rendering: pixelated;
+    }
+    #pair p {
+      margin: 8px 0 0;
+      font-size: 14px;
+    }
+    #pair a {
+      word-break: break-all;
+      font-size: 11px;
+      color: #555;
+    }
+    .hidden {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="screen"></canvas>
+  <div id="status">
+    <span id="status-text">Starting...</span>
+    <button id="fullscreen">Fullscreen</button>
+    <button id="show-pair" class="hidden">Show pairing code</button>
+  </div>
+  <div id="pair">
+    <img id="pair-qr" alt="QR code that opens the camera page on your phone">
+    <p><strong>Scan with your phone</strong> to use it as the camera.</p>
+    <p>Then point the phone at this screen so all four corner codes are in view.</p>
+    <p><a id="pair-link" target="_blank"></a></p>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="map.js"></script>
+  <script src="sheet.js"></script>
+  <script src="feedback.js"></script>
+  <script src="display.js"></script>
+</body>
+</html>
