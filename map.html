@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>map</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 16px;
+      font-family: monospace;
+      background: #fff;
+    }
+    #sheet {
+      display: block;
+      max-width: 100%;
+      max-height: calc(100vh - 80px);
+      margin: 0 auto;
+    }
+    .actions {
+      text-align: center;
+      margin-bottom: 12px;
+    }
+    @media print {
+      @page { margin: 0.4in; }
+      body { padding: 0; }
+      .actions { display: none; }
+      #sheet { max-height: none; width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="actions">
+    <button id="print">Print</button>
+    <a id="download" download="map-with-anchors.png">Download PNG</a>
+  </div>
+  <img id="sheet" alt="Floor plan with four QR anchor codes at its corners">
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+  <script src="map.js"></script>
+  <script>
+    // The sheet is the floor plan, plus a margin if any anchor sticks out.
+    const MARGIN = Math.max(0, ...Object.values(MAP.anchors).flatMap(({ x, y }) => [
+      -x, -y, x - MAP.width, y - MAP.height,
+    ].map((overhang) => overhang + MAP.anchorSize / 2)));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = MAP.width + MARGIN * 2;
+    canvas.height = MAP.height + MARGIN * 2;
+    const ctx = canvas.getContext('2d');
+
+    const plan = new Image();
+    plan.onload = () => {
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(plan, MARGIN, MARGIN, MAP.width, MAP.height);
+
+      for (const [text, { x, y }] of Object.entries(MAP.anchors)) {
+        drawQr(text, MARGIN + x - MAP.anchorSize / 2, MARGIN + y - MAP.anchorSize / 2, MAP.anchorSize);
+      }
+
+      const url = canvas.toDataURL('image/png');
+      document.getElementById('sheet').src = url;
+      document.getElementById('download').href = url;
+    };
+    plan.src = MAP.image;
+
+    // Draws a code filling `size` square pixels, including its quiet zone.
+    // The quiet zone is painted white because the code sits on the plan.
+    function drawQr(text, left, top, size) {
+      const qr = qrcode(0, 'M');
+      qr.addData(text);
+      qr.make();
+
+      const QUIET_ZONE = 4;
+      const count = qr.getModuleCount();
+      const cell = size / (count + QUIET_ZONE * 2);
+
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(left, top, size, size);
+      ctx.fillStyle = '#000';
+      for (let row = 0; row < count; row++) {
+        for (let col = 0; col < count; col++) {
+          if (qr.isDark(row, col)) {
+            // Round to whole pixels so neighbouring modules don't leave seams.
+            const x = Math.round(left + (col + QUIET_ZONE) * cell);
+            const y = Math.round(top + (row + QUIET_ZONE) * cell);
+            const nextX = Math.round(left + (col + QUIET_ZONE + 1) * cell);
+            const nextY = Math.round(top + (row + QUIET_ZONE + 1) * cell);
+            ctx.fillRect(x, y, nextX - x, nextY - y);
+          }
+        }
+      }
+    }
+
+    document.getElementById('print').addEventListener('click', () => window.print());
+  </script>
+</body>
+</html>

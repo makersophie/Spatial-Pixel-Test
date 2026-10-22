@@ -27,10 +27,16 @@ const CARDS = {
   'bottle': { name: 'water', kind: 'resource', type: 'water' },
   'phone': { name: 'light', kind: 'resource', type: 'light' },
   'notebook': { name: 'medicine', kind: 'resource', type: 'medicine' },
+  // Characters that move around the printed map (see cards.html).
+  'mouse-1': { name: 'mouse-1', kind: 'mouse' },
+  'mouse-2': { name: 'mouse-2', kind: 'mouse' },
+  'human': { name: 'human', kind: 'human' },
 };
 
 const NEED_COLOR = '#ff0000';
 const MATCHED_COLOR = '#00ff00';
+const ANCHOR_COLOR = '#ffcc00';
+const MAP_COLOR = 'rgba(0, 200, 255, 0.9)';
 
 function parseCard(text) {
   return CARDS[text.trim().toLowerCase()] ?? null;
@@ -392,6 +398,219 @@ function cornersOf(location) {
 }
 
 // ---------------------------------------------------------------------------
+// Map calibration
+//
+// The printed map (map.html) has a QR anchor at each corner. While all four
+// are in frame, a homography is fitted from their centres in the frame to
+// their known positions on the floor plan, so any code in the frame can be
+// placed on the map. The last fit is kept when an anchor is briefly hidden
+// (e.g. by a hand), on the assumption that the map and camera stay put.
+// ---------------------------------------------------------------------------
+
+let frameToMap = null;
+let mapToFrame = null;
+let calibrationLive = false;
+
+function updateCalibration() {
+  const frame = [];
+  const map = [];
+  for (const [text, position] of Object.entries(MAP.anchors)) {
+    const track = tracks.find((t) => t.data.trim().toLowerCase() === text);
+    if (!track) {
+      calibrationLive = false;
+      return;
+    }
+    frame.push(quadCenter(track.location));
+    map.push(position);
+  }
+
+  const forward = solveHomography(frame, map);
+  const inverse = solveHomography(map, frame);
+  calibrationLive = Boolean(forward && inverse);
+  if (calibrationLive) {
+    frameToMap = forward;
+    mapToFrame = inverse;
+  }
+}
+
+// Under perspective the average of the corners drifts off-centre, but the
+// diagonals still cross at the true centre of the code.
+function quadCenter(location) {
+  const [a, b, c, d] = cornersOf(location);
+  const denom = (a.x - c.x) * (b.y - d.y) - (a.y - c.y) * (b.x - d.x);
+  if (Math.abs(denom) < 1e-9) {
+    return centerOf(location);
+  }
+  const t = ((a.x - b.x) * (b.y - d.y) - (a.y - b.y) * (b.x - d.x)) / denom;
+  return { x: a.x + t * (c.x - a.x), y: a.y + t * (c.y - a.y) };
+}
+
+// Fits the 3x3 matrix H (with H[2][2] = 1) mapping four `src` points onto
+// four `dst` points, by solving the standard 8x8 linear system.
+function solveHomography(src, dst) {
+  const rows = [];
+  for (let i = 0; i < 4; i++) {
+    const { x, y } = src[i];
+    const { x: u, y: v } = dst[i];
+    rows.push([x, y, 1, 0, 0, 0, -u * x, -u * y, u]);
+    rows.push([0, 0, 0, x, y, 1, -v * x, -v * y, v]);
+  }
+
+  // Gaussian elimination with partial pivoting.
+  for (let col = 0; col < 8; col++) {
+    let pivot = col;
+    for (let r = col + 1; r < 8; r++) {
+      if (Math.abs(rows[r][col]) > Math.abs(rows[pivot][col])) {
+        pivot = r;
+      }
+    }
+    if (Math.abs(rows[pivot][col]) < 1e-9) {
+      return null;
+    }
+    [rows[col], rows[pivot]] = [rows[pivot], rows[col]];
+
+    for (let r = 0; r < 8; r++) {
+      if (r !== col) {
+        const factor = rows[r][col] / rows[col][col];
+        for (let k = col; k < 9; k++) {
+          rows[r][k] -= factor * rows[col][k];
+        }
+      }
+    }
+  }
+
+  const h = rows.map((row, i) => row[8] / row[i]);
+  return [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], 1];
+}
+
+function applyHomography(h, { x, y }) {
+  const w = h[6] * x + h[7] * y + h[8];
+  return {
+    x: (h[0] * x + h[1] * y + h[2]) / w,
+    y: (h[3] * x + h[4] * y + h[5]) / w,
+  };
+}
+
+// Where a track sits on the floor plan, and which room that is.
+function placeOnMap(track) {
+  if (!frameToMap) {
+    return null;
+  }
+  const point = applyHomography(frameToMap, track.center);
+  return { point, zone: zoneAt(point) };
+}
+
+// Location queries, handy from the console:
+//   whereIs('need-water')   -> 'kitchen'
+//   whoIsIn('mouse hole')   -> ['bottle', ...] or [] if empty
+function whereIs(name) {
+  const track = tracks.find((t) => (t.card?.name ?? t.data) === name);
+  return track ? placeOnMap(track)?.zone ?? null : null;
+}
+
+function whoIsIn(zone) {
+  return tracks
+    .filter((t) => !isMapAnchor(t.data) && placeOnMap(t)?.zone === zone)
+    .map((t) => t.card?.name ?? t.data);
+}
+
+// ---------------------------------------------------------------------------
+// Reactions
+//
+// From the Spatial Computing Mouse brief: a character's reaction depends on
+// the room it is in, unless another character is right next to it.
+//   object + location = status, and mouse + human / mouse + mouse = event.
+// Each reaction shows a speech bubble and plays a short sound when it starts.
+// ---------------------------------------------------------------------------
+
+const PLACE_REACTIONS = {
+  mouse: {
+    'kitchen': { text: 'Food stolen!', sound: 'sneak' },
+    'mouse hole': { text: 'Home sweet home. Safe!', sound: 'home' },
+    'living room': { text: 'Scared of being killed!', sound: 'scared' },
+  },
+  human: {
+    'kitchen': { text: 'Preparing food', sound: 'cook' },
+    'mouse hole': { text: 'The wall has a hole. Needs patching!', sound: 'fix' },
+    'living room': { text: 'Relaxing...', sound: 'relax' },
+  },
+};
+
+// Meetings involve two cards but show one bubble (see render).
+const CAUGHT = { text: 'Caught! Game over', sound: 'gameover', shared: true };
+const MICE_MEET = { text: 'Happy happy!!!', sound: 'happy', shared: true };
+
+// Two characters "meet" when their centres are this many card widths apart.
+const MEET_DISTANCE = 2.5;
+
+function isNear(a, b) {
+  const distance = Math.hypot(a.center.x - b.center.x, a.center.y - b.center.y);
+  return distance < Math.max(a.size, b.size) * MEET_DISTANCE;
+}
+
+function reactionFor(track, zone) {
+  const kind = track.card?.kind;
+  if (kind !== 'mouse' && kind !== 'human') {
+    return null;
+  }
+
+  const others = tracks.filter((t) => t !== track && isNear(t, track));
+  if (kind === 'mouse') {
+    if (others.some((t) => t.card?.kind === 'human')) {
+      return CAUGHT;
+    }
+    if (others.some((t) => t.card?.kind === 'mouse')) {
+      return MICE_MEET;
+    }
+  } else if (others.some((t) => t.card?.kind === 'mouse')) {
+    return CAUGHT;
+  }
+
+  return PLACE_REACTIONS[kind][zone] ?? null;
+}
+
+// Short synthesised jingles, as [frequency Hz, seconds] notes.
+const SOUNDS = {
+  sneak: [[660, 0.08], [880, 0.08], [660, 0.08]],
+  home: [[523, 0.15], [659, 0.15], [784, 0.3]],
+  scared: [[220, 0.12], [208, 0.12], [196, 0.35]],
+  cook: [[440, 0.1], [0, 0.05], [440, 0.1]],
+  fix: [[300, 0.07], [0, 0.07], [300, 0.07], [0, 0.07], [300, 0.07]],
+  relax: [[392, 0.35], [330, 0.45]],
+  gameover: [[392, 0.2], [330, 0.2], [262, 0.6]],
+  happy: [[784, 0.1], [988, 0.1], [1175, 0.1], [1568, 0.25]],
+};
+
+// Browsers only allow audio after the user interacts with the page, so the
+// first tap or click anywhere turns sound on.
+let audio = null;
+window.addEventListener('pointerdown', () => {
+  audio ??= new AudioContext();
+  audio.resume();
+});
+
+function playSound(name) {
+  if (!audio || audio.state !== 'running') {
+    return;
+  }
+  let at = audio.currentTime;
+  for (const [frequency, duration] of SOUNDS[name]) {
+    if (frequency > 0) {
+      const osc = audio.createOscillator();
+      const gain = audio.createGain();
+      osc.type = 'square';
+      osc.frequency.value = frequency;
+      gain.gain.setValueAtTime(0.08, at);
+      gain.gain.exponentialRampToValueAtTime(0.001, at + duration);
+      osc.connect(gain).connect(audio.destination);
+      osc.start(at);
+      osc.stop(at + duration);
+    }
+    at += duration;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Matching and rendering
 // ---------------------------------------------------------------------------
 
@@ -400,14 +619,43 @@ const thanksElements = new Map();
 
 function render(now) {
   pruneTracks(now);
+  updateCalibration();
 
   overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+  drawMap();
+
   const shown = new Set();
+  let gameOver = false;
+  // Cards that already showed a meeting this frame, so their partner doesn't
+  // repeat the same bubble and sound.
+  const met = [];
   for (const track of tracks) {
+    if (isMapAnchor(track.data)) {
+      drawBox(track.location, ANCHOR_COLOR);
+      continue;
+    }
+
     const matched = isMatched(track);
     const color = track.card?.kind === 'need' && !matched ? NEED_COLOR : MATCHED_COLOR;
     drawBox(track.location, color);
-    drawLabel(track.location, track.card?.name ?? track.data);
+    const name = track.card?.name ?? track.data;
+    const zone = placeOnMap(track)?.zone;
+    drawLabel(track.location, zone ? `${name} @ ${zone}` : name);
+
+    const reaction = reactionFor(track, zone);
+    const partnerShown = reaction?.shared &&
+      met.some((other) => other.reaction === reaction && isNear(other, track));
+    if (reaction && reaction !== track.reaction && !partnerShown) {
+      playSound(reaction.sound);
+    }
+    track.reaction = reaction;
+    if (reaction && !partnerShown) {
+      drawBubble(track.location, reaction.text);
+      if (reaction.shared) {
+        met.push(track);
+      }
+    }
+    gameOver ||= reaction === CAUGHT;
 
     if (matched) {
       showThanks(track);
@@ -420,6 +668,10 @@ function render(now) {
       element.remove();
       thanksElements.delete(id);
     }
+  }
+
+  if (gameOver) {
+    drawBanner('GAME OVER');
   }
 
   requestAnimationFrame(render);
@@ -453,6 +705,35 @@ function showThanks(track) {
   element.style.transform = `rotate(${angle}rad)`;
 }
 
+// Outlines the floor plan and its rooms on top of the video, so it's easy to
+// see whether the calibration lines up. Dashed once an anchor is out of view.
+function drawMap() {
+  if (!mapToFrame) {
+    return;
+  }
+
+  overlayCtx.save();
+  overlayCtx.strokeStyle = MAP_COLOR;
+  overlayCtx.lineWidth = Math.max(2, overlay.width * 0.003);
+  overlayCtx.setLineDash(calibrationLive ? [] : [12, 8]);
+
+  const rects = [{ x: 0, y: 0, width: MAP.width, height: MAP.height }, ...MAP.zones];
+  for (const rect of rects) {
+    const corners = [
+      { x: rect.x, y: rect.y },
+      { x: rect.x + rect.width, y: rect.y },
+      { x: rect.x + rect.width, y: rect.y + rect.height },
+      { x: rect.x, y: rect.y + rect.height },
+    ].map((p) => applyHomography(mapToFrame, p));
+
+    overlayCtx.beginPath();
+    corners.forEach((p, i) => (i === 0 ? overlayCtx.moveTo(p.x, p.y) : overlayCtx.lineTo(p.x, p.y)));
+    overlayCtx.closePath();
+    overlayCtx.stroke();
+  }
+  overlayCtx.restore();
+}
+
 function drawBox(location, color) {
   const { topLeftCorner, topRightCorner, bottomRightCorner, bottomLeftCorner } = location;
 
@@ -465,6 +746,52 @@ function drawBox(location, color) {
   overlayCtx.lineTo(bottomLeftCorner.x, bottomLeftCorner.y);
   overlayCtx.closePath();
   overlayCtx.stroke();
+}
+
+// A white speech bubble above the card, pointing down at it.
+function drawBubble(location, text) {
+  const points = cornersOf(location);
+  const cx = points.reduce((sum, p) => sum + p.x, 0) / 4;
+  const top = Math.min(...points.map((p) => p.y));
+
+  const fontSize = Math.max(18, overlay.width * 0.022);
+  const padding = fontSize * 0.5;
+  const tail = fontSize * 0.6;
+  overlayCtx.font = `bold ${fontSize}px sans-serif`;
+  overlayCtx.textBaseline = 'middle';
+  const width = overlayCtx.measureText(text).width + padding * 2;
+  const height = fontSize + padding * 2;
+  const x = Math.min(Math.max(cx - width / 2, 0), overlay.width - width);
+  const y = Math.max(top - tail - height, 0);
+
+  overlayCtx.fillStyle = '#fff';
+  overlayCtx.strokeStyle = '#000';
+  overlayCtx.lineWidth = Math.max(2, fontSize * 0.1);
+  overlayCtx.beginPath();
+  overlayCtx.roundRect(x, y, width, height, fontSize * 0.4);
+  overlayCtx.moveTo(cx - tail * 0.6, y + height);
+  overlayCtx.lineTo(cx, y + height + tail);
+  overlayCtx.lineTo(cx + tail * 0.6, y + height);
+  overlayCtx.fill();
+  overlayCtx.stroke();
+  // Hide the bubble's bottom edge where the tail joins it.
+  overlayCtx.fillRect(cx - tail * 0.6 + overlayCtx.lineWidth, y + height - overlayCtx.lineWidth,
+    tail * 1.2 - overlayCtx.lineWidth * 2, overlayCtx.lineWidth * 2);
+
+  overlayCtx.fillStyle = '#000';
+  overlayCtx.fillText(text, x + padding, y + height / 2);
+}
+
+function drawBanner(text) {
+  const fontSize = overlay.width * 0.09;
+  overlayCtx.font = `bold ${fontSize}px sans-serif`;
+  overlayCtx.textAlign = 'center';
+  overlayCtx.textBaseline = 'middle';
+  overlayCtx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  overlayCtx.fillRect(0, overlay.height / 2 - fontSize, overlay.width, fontSize * 2);
+  overlayCtx.fillStyle = '#ff3b30';
+  overlayCtx.fillText(text, overlay.width / 2, overlay.height / 2);
+  overlayCtx.textAlign = 'start';
 }
 
 function drawLabel(location, text) {
