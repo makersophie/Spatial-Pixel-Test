@@ -22,3 +22,7 @@ and a sound (tap the page once to turn sound on):
 
 - mouse + human close together: **Caught! Game over**
 - mouse + mouse close together: **Happy happy!!!**
+
+## Print
+
+Ready-to-print PDFs (letter size, print at 100% / actual size): `print/map.pdf` and `print/cards.pdf`.
