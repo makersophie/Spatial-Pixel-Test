@@ -117,11 +117,13 @@ async function startDetection() {
 }
 
 // Codes far from the camera can be too small for the detector to resolve.
-// So every other frame, one region of the image (a 2x2 grid of overlapping
-// regions, taken in turn) is enlarged and scanned as well.
+// So every ZOOM_EVERY frames, one region of the image (a 2x2 grid of
+// overlapping regions, taken in turn) is enlarged and scanned instead. The
+// other frames scan the whole picture, so moving cards update quickly.
 const ZOOM = 2;
 const ZOOM_REGION = 0.6;
 const ZOOM_ORIGINS = [[0, 0], [1, 0], [0, 1], [1, 1]];
+const ZOOM_EVERY = 3;
 
 const zoomCanvas = document.createElement('canvas');
 const zoomCtx = zoomCanvas.getContext('2d');
@@ -131,10 +133,10 @@ let zoomCycleStartedAt = 0;
 async function runNativeDetection(detector) {
   if (video.readyState >= video.HAVE_ENOUGH_DATA) {
     try {
-      if (nativeFrame % 2 === 0) {
+      if (nativeFrame % ZOOM_EVERY !== ZOOM_EVERY - 1) {
         reportNativeCodes(await detector.detect(video), { x: 0, y: 0, scale: 1 });
       } else {
-        const region = prepareZoomRegion((nativeFrame - 1) / 2 % ZOOM_ORIGINS.length);
+        const region = prepareZoomRegion(Math.floor(nativeFrame / ZOOM_EVERY) % ZOOM_ORIGINS.length);
         reportNativeCodes(await detector.detect(zoomCanvas), region);
       }
     } catch (error) {
@@ -207,6 +209,8 @@ const pyramid = PYRAMID_LEVELS.map((qrSize) => {
     canvas,
     ctx: canvas.getContext('2d', { willReadFrequently: true }),
     scale: 1,
+    origin: { x: 0, y: 0 },
+    capturedAt: 0,
   };
 });
 
@@ -215,21 +219,80 @@ let passStartedAt = 0;
 
 function runPyramidDetection() {
   if (video.readyState >= video.HAVE_ENOUGH_DATA) {
+    followTracks();
+
+    // Following has its own time on top of the pyramid's budget, so a full
+    // pass (and so finding new codes) doesn't slow down.
+    const deadline = performance.now() + SCAN_BUDGET_MS;
     if (scanJobs.length === 0) {
       if (passStartedAt) {
         scanCycleMs = performance.now() - passStartedAt;
       }
-      scanJobs = startPyramidPass();
       passStartedAt = performance.now();
+      scanJobs = startPyramidPass();
     }
 
-    const deadline = performance.now() + SCAN_BUDGET_MS;
-    while (scanJobs.length > 0 && performance.now() < deadline) {
+    // Always scan at least one tile, so new codes are still found while
+    // following takes up most of the budget.
+    do {
       scanTile(scanJobs.shift());
-    }
+    } while (scanJobs.length > 0 && performance.now() < deadline);
   }
 
   requestAnimationFrame(runPyramidDetection);
+}
+
+// A full pyramid pass takes many frames, which makes cards being moved
+// around feel sluggish. So every frame, each object already found is looked
+// for again in a small window around where it was last seen, scaled so the
+// code comes out at TARGET_QR_PX.
+const FOLLOW_WINDOW = 3;
+const FOLLOW_MAX_AGE_MS = 1000;
+
+const follow = {
+  canvas: document.createElement('canvas'),
+  scale: 1,
+  origin: { x: 0, y: 0 },
+  capturedAt: 0,
+};
+follow.ctx = follow.canvas.getContext('2d', { willReadFrequently: true });
+
+function followTracks() {
+  const now = performance.now();
+  // Copied first: a code found here can add to `tracks`.
+  const targets = tracks.filter((track) => isZoneObject(track) && now - track.lastSeen < FOLLOW_MAX_AGE_MS);
+
+  for (const track of targets) {
+    const half = track.size * FOLLOW_WINDOW / 2;
+    const x = Math.max(0, Math.round(track.center.x - half));
+    const y = Math.max(0, Math.round(track.center.y - half));
+    const width = Math.min(video.videoWidth, Math.round(track.center.x + half)) - x;
+    const height = Math.min(video.videoHeight, Math.round(track.center.y + half)) - y;
+    if (width <= 0 || height <= 0) {
+      continue;
+    }
+
+    follow.scale = Math.min(1, TARGET_QR_PX / track.size);
+    follow.origin = { x, y };
+    follow.capturedAt = performance.now();
+    const scaledWidth = Math.max(1, Math.round(width * follow.scale));
+    const scaledHeight = Math.max(1, Math.round(height * follow.scale));
+    if (follow.canvas.width !== scaledWidth || follow.canvas.height !== scaledHeight) {
+      follow.canvas.width = scaledWidth;
+      follow.canvas.height = scaledHeight;
+    }
+    follow.ctx.drawImage(video, x, y, width, height, 0, 0, scaledWidth, scaledHeight);
+
+    // Stop as soon as the code turns up. A neighbouring card in the window
+    // can be decoded first, so allow one more try after that.
+    const region = { level: follow, x: 0, y: 0, width: scaledWidth, height: scaledHeight };
+    for (let i = 0; i < 2 && track.lastSeen !== follow.capturedAt; i++) {
+      if (scanTile(region, 1) === 0) {
+        break;
+      }
+    }
+    track.misses = track.lastSeen === follow.capturedAt ? 0 : (track.misses ?? 0) + 1;
+  }
 }
 
 // Snapshot the current frame into every pyramid level and queue up all of
@@ -238,6 +301,7 @@ function startPyramidPass() {
   const jobs = [];
 
   for (const level of pyramid) {
+    level.capturedAt = passStartedAt;
     level.scale = Math.min(1, TARGET_QR_PX / level.qrSize);
     const width = Math.round(video.videoWidth * level.scale);
     const height = Math.round(video.videoHeight * level.scale);
@@ -288,12 +352,13 @@ function getTilePositions(dimension, tile, step) {
 // hit the code is painted over and the same tile is scanned again.
 const MAX_CODES_PER_TILE = 4;
 
-function scanTile({ level, x, y, width, height }) {
-  for (let i = 0; i < MAX_CODES_PER_TILE; i++) {
+// Returns how many codes were found.
+function scanTile({ level, x, y, width, height }, maxCodes = MAX_CODES_PER_TILE) {
+  for (let i = 0; i < maxCodes; i++) {
     const tile = level.ctx.getImageData(x, y, width, height);
     const qrCode = jsQR(tile.data, width, height, { inversionAttempts: 'dontInvert' });
     if (!qrCode) {
-      return;
+      return i;
     }
 
     const { topLeftCorner, topRightCorner, bottomRightCorner, bottomLeftCorner } = qrCode.location;
@@ -303,16 +368,17 @@ function scanTile({ level, x, y, width, height }) {
 
     // Map the corners from level space back to full-resolution frame space.
     const [tl, tr, br, bl] = inLevel.map((point) => ({
-      x: point.x / level.scale,
-      y: point.y / level.scale,
+      x: level.origin.x + point.x / level.scale,
+      y: level.origin.y + point.y / level.scale,
     }));
     reportDetection(qrCode.data, {
       topLeftCorner: tl,
       topRightCorner: tr,
       bottomRightCorner: br,
       bottomLeftCorner: bl,
-    });
+    }, level.capturedAt);
   }
+  return maxCodes;
 }
 
 // jsQR's corners sit on the finder pattern centres, so grow the quad a bit
@@ -348,31 +414,44 @@ function maskCode(ctx, corners) {
 const tracks = [];
 let nextTrackId = 1;
 
-function reportDetection(data, location) {
+// `seenAt` is when the scanned picture was taken. A pyramid pass works from
+// a snapshot for many frames, so its finds can be older than what following
+// has already reported, and mustn't drag a moving card back.
+function reportDetection(data, location, seenAt = performance.now()) {
   const card = parseCard(data);
   const center = centerOf(location);
   const size = sizeOf(location);
-  const now = performance.now();
 
+  // There's only one of each character, so a character card that jumped
+  // further than usual (moved quickly) is still the same track rather than
+  // a second copy left behind.
+  const unique = card?.kind === 'mouse' || card?.kind === 'human';
   const existing = tracks.find((track) => {
     if (track.data !== data) {
       return false;
     }
     const distance = Math.hypot(track.center.x - center.x, track.center.y - center.y);
-    return distance < Math.max(track.size, size) * 1.5;
+    return unique || distance < Math.max(track.size, size) * 1.5;
   });
 
-  if (existing) {
-    Object.assign(existing, { location, center, size, lastSeen: now });
-  } else {
-    tracks.push({ id: nextTrackId++, data, card, location, center, size, lastSeen: now });
+  if (!existing) {
+    tracks.push({ id: nextTrackId++, data, card, location, center, size, lastSeen: seenAt });
+  } else if (seenAt >= existing.lastSeen) {
+    Object.assign(existing, { location, center, size, lastSeen: seenAt });
   }
 }
 
+// Following looks for a code every frame, so once it has missed one several
+// times in a row the card has most likely been taken away. It goes after
+// MIN_TTL_MS then, rather than waiting out a whole pyramid pass.
+const MIN_TTL_MS = 350;
+const FOLLOW_MISSES = 8;
+
 function pruneTracks(now) {
-  const ttl = Math.max(350, scanCycleMs * 1.5);
+  const ttl = Math.max(MIN_TTL_MS, scanCycleMs * 1.5);
   for (let i = tracks.length - 1; i >= 0; i--) {
-    if (now - tracks[i].lastSeen > ttl) {
+    const age = now - tracks[i].lastSeen;
+    if (age > ttl || (age > MIN_TTL_MS && tracks[i].misses >= FOLLOW_MISSES)) {
       tracks.splice(i, 1);
     }
   }
@@ -812,7 +891,7 @@ function render(now) {
 // ---------------------------------------------------------------------------
 
 const DISPLAY_ID = new URLSearchParams(location.search).get('display');
-const SEND_INTERVAL_MS = 100;
+const SEND_INTERVAL_MS = 50;
 const RECONNECT_MS = 2000;
 
 let displayLink = null;
