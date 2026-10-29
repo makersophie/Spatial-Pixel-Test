@@ -56,3 +56,238 @@ html, body {
   display: block;
   width: 100%;
 }
+
+/* ---------------------------------------------------------------------------
+   Battle screen (battle.js): a neon arena that covers the camera view.
+   --------------------------------------------------------------------------- */
+
+#battle {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: #fff;
+  font-family: 'Courier New', monospace;
+  font-weight: bold;
+  text-transform: uppercase;
+  background: radial-gradient(ellipse at 50% 25%, #5b2a9c 0%, #22104a 50%, #07030f 100%);
+}
+
+#battle[hidden] {
+  display: none;
+}
+
+/* Glowing floor grid, tilted away into the distance. */
+#battle::before {
+  content: '';
+  position: absolute;
+  left: -50%;
+  right: -50%;
+  bottom: -20%;
+  height: 75%;
+  background:
+    repeating-linear-gradient(90deg, rgba(255, 45, 170, 0.5) 0 2px, transparent 2px 70px),
+    repeating-linear-gradient(0deg, rgba(255, 45, 170, 0.5) 0 2px, transparent 2px 70px);
+  transform: perspective(500px) rotateX(62deg);
+  transform-origin: bottom;
+}
+
+/* Sun on the horizon. */
+#battle::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  width: 34vmin;
+  height: 34vmin;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: linear-gradient(#ffd23f 0%, #ff4fa3 70%);
+  box-shadow: 0 0 60px rgba(255, 79, 163, 0.8);
+  opacity: 0.55;
+}
+
+.battle-title {
+  position: absolute;
+  top: 14vmin;
+  width: 100%;
+  text-align: center;
+  font-size: 6vmin;
+  letter-spacing: 0.1em;
+  color: #ffd23f;
+  text-shadow: 0 0 12px #ff4fa3, 4px 4px 0 #000;
+  z-index: 1;
+}
+
+.battle-hud {
+  position: absolute;
+  top: 2vmin;
+  left: 2vmin;
+  right: 2vmin;
+  display: flex;
+  align-items: flex-start;
+  gap: 2vmin;
+  z-index: 2;
+}
+
+.mice-bars {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1vmin;
+}
+
+.hp-bar {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 1vmin;
+  font-size: 2.6vmin;
+}
+
+.hp-bar .track {
+  flex: 1;
+  height: 2.6vmin;
+  border: 3px solid #fff;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.hp-bar .fill {
+  height: 100%;
+  background: #34c759;
+  transition: width 0.25s;
+}
+
+.hp-bar .fill.low {
+  background: #ff3b30;
+}
+
+.hp-bar.human .label { color: #4fc3ff; }
+.hp-bar.mouse .label { color: #ff9f2e; }
+
+.battle-timer {
+  min-width: 10vmin;
+  text-align: center;
+  font-size: 7vmin;
+  color: #ffd23f;
+  text-shadow: 3px 3px 0 #000;
+}
+
+.battle-field {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+}
+
+.fighter {
+  position: absolute;
+  width: 18vmin;
+  height: 18vmin;
+  margin: -9vmin 0 0 -9vmin;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  transition: left 0.08s linear, top 0.08s linear, opacity 0.3s;
+}
+
+.fighter.human {
+  border: 6px solid #4fc3ff;
+  box-shadow: 0 0 24px #4fc3ff;
+}
+
+.fighter.mouse {
+  border: 6px solid #ff9f2e;
+  box-shadow: 0 0 24px #ff9f2e;
+}
+
+.fighter .icon {
+  font-size: 10vmin;
+  line-height: 1;
+}
+
+.fighter .name {
+  font-size: 2.2vmin;
+}
+
+.fighter.missing {
+  opacity: 0.25;
+}
+
+.fighter.out {
+  filter: grayscale(1);
+  opacity: 0.4;
+}
+
+.fighter.hit {
+  animation: shake 0.35s;
+}
+
+@keyframes shake {
+  0%, 100% { translate: 0 0; }
+  20% { translate: -12px 0; background: rgba(255, 59, 48, 0.8); }
+  40% { translate: 12px 0; }
+  60% { translate: -8px 0; background: rgba(255, 59, 48, 0.8); }
+  80% { translate: 8px 0; }
+}
+
+.pop {
+  position: absolute;
+  translate: -50% -130%;
+  font-size: 5vmin;
+  white-space: nowrap;
+  text-shadow: 3px 3px 0 #000;
+  pointer-events: none;
+  animation: pop 1s ease-out forwards;
+}
+
+.pop.bite { color: #ff9f2e; }
+.pop.swat { color: #4fc3ff; }
+.pop.ko { color: #ff3b30; font-size: 7vmin; }
+
+@keyframes pop {
+  0% { transform: scale(0.5); opacity: 1; }
+  20% { transform: scale(1.2); }
+  100% { transform: translateY(-8vmin) scale(1); opacity: 0; }
+}
+
+.battle-message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14vmin;
+  color: #ffd23f;
+  text-shadow: 0 0 20px #ff4fa3, 6px 6px 0 #000;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.battle-message:not(:empty) {
+  animation: pop-in 0.4s ease-out;
+}
+
+.battle-message.result.mice { color: #ff9f2e; }
+.battle-message.result.human { color: #4fc3ff; }
+
+.battle-message.result {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+@keyframes pop-in {
+  from { transform: scale(2.5); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.battle-help {
+  position: absolute;
+  bottom: 2vmin;
+  width: 100%;
+  text-align: center;
+  font-size: 2.4vmin;
+  text-transform: none;
+  color: rgba(255, 255, 255, 0.85);
+  z-index: 2;
+}

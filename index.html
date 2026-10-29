@@ -10,11 +10,32 @@
   <video id="webcam" autoplay playsinline muted></video>
   <canvas id="overlay"></canvas>
   <div id="thanks"></div>
+  <div id="battle" hidden>
+    <div class="battle-title">MOUSE STRIKES BACK</div>
+    <div class="battle-hud">
+      <div class="hp-bar human" data-name="HM-01">
+        <span class="label">HM-01</span><div class="track"><div class="fill"></div></div><span class="value"></span>
+      </div>
+      <div class="battle-timer"></div>
+      <div class="mice-bars">
+        <div class="hp-bar mouse" data-name="MS-01">
+          <span class="label">MS-01</span><div class="track"><div class="fill"></div></div><span class="value"></span>
+        </div>
+        <div class="hp-bar mouse" data-name="MS-02">
+          <span class="label">MS-02</span><div class="track"><div class="fill"></div></div><span class="value"></span>
+        </div>
+      </div>
+    </div>
+    <div class="battle-field"></div>
+    <div class="battle-message"></div>
+    <div class="battle-help">Pull your card back, then charge! Mice: bite the human. Human: swat the mice.</div>
+  </div>
   <button id="sound">🔇 Tap for sound</button>
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script src="map.js"></script>
   <script src="feedback.js"></script>
   <script src="script.js"></script>
+  <script src="battle.js"></script>
 </body>
 </html>
