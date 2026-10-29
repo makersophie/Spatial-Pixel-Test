@@ -297,7 +297,8 @@ function drawBattle(now, fighters) {
 // (e.g. the sides of the picture on a phone held upright).
 function frameToScreen({ x, y }) {
   const scale = Math.max(innerWidth / overlay.width, innerHeight / overlay.height);
-  const margin = Math.min(innerWidth, innerHeight) * 0.09;
+  // Half an avatar (18vmin wide) plus its border and glow.
+  const margin = Math.min(innerWidth, innerHeight) * 0.11;
   const clamp = (value, max) => Math.min(Math.max(value, margin), max - margin);
   return {
     x: clamp((innerWidth - overlay.width * scale) / 2 + x * scale, innerWidth),
