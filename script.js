@@ -721,6 +721,12 @@ function reactionFor(track, zone) {
 // Matching and rendering
 // ---------------------------------------------------------------------------
 
+// Sound needs a tap first (see feedback.js), so ask for one until it's on.
+const soundButton = document.getElementById('sound');
+soundButton.addEventListener('click', () => {
+  unlockAudio().then(() => soundButton.classList.toggle('hidden', soundOn()));
+});
+
 const thanksLayer = document.getElementById('thanks');
 const thanksElements = new Map();
 
@@ -799,6 +805,8 @@ function render(now) {
   if (gameOver) {
     drawBanner(overlayCtx, 'GAME OVER');
   }
+
+  soundButton.classList.toggle('hidden', soundOn());
 
   sendToDisplay({ type: 'state', calibrated: calibrationLive, gameOver, characters }, now);
 

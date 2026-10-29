@@ -13,7 +13,7 @@ Rooms and anchor positions live in `map.js`.
 
 Print `cards.html` for the `MS-01`, `MS-02` (mice) and `HM-01` (human) cards and move them around the map.
 Each one reacts to the room it is in, and to meeting another character, with a speech bubble
-and a sound (tap the page once to turn sound on):
+and a sound (tap **Tap for sound** at the bottom, or anywhere on the page, to turn sound on):
 
 | | Kitchen | Mouse hole | Living room |
 |---|---|---|---|
