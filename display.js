@@ -184,7 +184,9 @@ function render(now) {
     lastReactions.set(character.id, character.bubble);
   }
 
-  if (fresh && state.gameOver) {
+  if (fresh && state.battle) {
+    drawBanner(screenCtx, state.battle);
+  } else if (fresh && state.gameOver) {
     drawBanner(screenCtx, 'GAME OVER');
   }
 

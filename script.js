@@ -678,6 +678,10 @@ const PLACE_REACTIONS = {
 
 // Meetings involve two cards but show one bubble (see render).
 const CAUGHT = { text: 'Caught! Game over', sound: 'gameover', shared: true };
+// A mouse alone next to the human has RESCUE_MS to be saved: if the other
+// mouse joins them, the three start a battle (battle.js) instead.
+const HELP = { text: 'Help me!!', sound: 'help' };
+const RESCUE_MS = 1500;
 const MICE_MEET = { text: 'Happy happy!!!', sound: 'happy', shared: true };
 // Both mice in the kitchen at once, whether or not they're side by side.
 const KITCHEN_RAID = { text: 'Food Stolen!', sound: 'sneak', shared: true, anywhere: true };
@@ -690,6 +694,17 @@ function isNear(a, b) {
   return distance < Math.max(a.size, b.size) * MEET_DISTANCE;
 }
 
+// Both mice right next to the human: the start of a battle.
+function miceSurroundHuman() {
+  const human = tracks.find((t) => t.card?.kind === 'human');
+  const mice = tracks.filter((t) => t.card?.kind === 'mouse');
+  return Boolean(human) && mice.length === 2 && mice.every((mouse) => isNear(mouse, human));
+}
+
+function isCaught(mouse, now) {
+  return mouse.corneredAt != null && now - mouse.corneredAt >= RESCUE_MS;
+}
+
 function reactionFor(track, zone) {
   const kind = track.card?.kind;
   if (kind !== 'mouse' && kind !== 'human') {
@@ -698,11 +713,14 @@ function reactionFor(track, zone) {
 
   // Most important first: getting caught, then raiding the kitchen together,
   // then meeting, then the room on its own.
+  const now = performance.now();
   const others = tracks.filter((t) => t !== track && isNear(t, track));
   if (kind === 'mouse') {
-    if (others.some((t) => t.card?.kind === 'human')) {
-      return CAUGHT;
+    if (others.some((t) => t.card?.kind === 'human') && !miceSurroundHuman()) {
+      track.corneredAt ??= now;
+      return isCaught(track, now) ? CAUGHT : HELP;
     }
+    track.corneredAt = null;
     if (zone === 'kitchen' && tracks.some((t) =>
       t !== track && t.card?.kind === 'mouse' && placeOnMap(t)?.zone === 'kitchen')) {
       return KITCHEN_RAID;
@@ -710,7 +728,7 @@ function reactionFor(track, zone) {
     if (others.some((t) => t.card?.kind === 'mouse')) {
       return MICE_MEET;
     }
-  } else if (others.some((t) => t.card?.kind === 'mouse')) {
+  } else if (others.some((t) => t.card?.kind === 'mouse' && isCaught(t, now))) {
     return CAUGHT;
   }
 
@@ -735,6 +753,16 @@ function render(now) {
   updateCalibration();
 
   overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+  soundButton.classList.toggle('hidden', soundOn());
+
+  // Two mice meeting the human turns the screen into a fight (battle.js).
+  if (updateBattle(now)) {
+    sendToDisplay({ type: 'state', calibrated: calibrationLive, gameOver: false, characters: [],
+      battle: battleSummary() }, now);
+    requestAnimationFrame(render);
+    return;
+  }
+
   drawMap();
   const zones = currentZones();
   drawZones(zones);
@@ -805,8 +833,6 @@ function render(now) {
   if (gameOver) {
     drawBanner(overlayCtx, 'GAME OVER');
   }
-
-  soundButton.classList.toggle('hidden', soundOn());
 
   sendToDisplay({ type: 'state', calibrated: calibrationLive, gameOver, characters }, now);
 

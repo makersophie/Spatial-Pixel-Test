@@ -22,8 +22,26 @@ and a sound (tap **Tap for sound** at the bottom, or anywhere on the page, to tu
 | HM-01 | Preparing Food | The wall has a hole. Needs patching! | Relaxing... |
 
 - MS-01 + MS-02 both in the kitchen (together or apart): **Food Stolen!**
-- mouse + human close together: **Caught! Game over**
+- one mouse + human close together: **Help me!!**, then after 1.5 seconds **Caught! Game over**
+  (unless the other mouse comes to the rescue)
+- both mice + human close together: the **Mouse Strikes Back** battle starts (see below)
 - mouse + mouse close together: **Happy happy!!!**
+
+## Battle: Mouse Strikes Back
+
+When both mice reach the human at the same time, the camera page turns into a neon arena with a
+health bar for each fighter and a 60-second timer. After a 3-2-1 countdown, the cards are the
+controllers: pull your card away, then charge it back into an opponent. Whoever is moving faster at
+the moment the cards meet lands the hit.
+
+- **Bite** (a mouse charges the human): the human loses 10 of 100.
+- **Combo** (both mice bite within 1 second): the human loses 10 more.
+- **Swat** (the human charges a mouse): that mouse loses 20 of 50. At 0 it is knocked out.
+
+The mice win by taking the human to 0, the human wins by knocking out both mice. When time runs
+out, the side with more health left wins. The result shows for 5 seconds, then the map comes back;
+move the cards apart before starting another battle. The map screen (`display.html`) shows a
+banner while the battle is on.
 
 ## Print
 
