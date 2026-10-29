@@ -21,15 +21,25 @@ const SOUNDS = {
 };
 
 // Browsers only allow audio after the user interacts with the page, so the
-// first tap or click anywhere turns sound on.
+// first tap or click anywhere turns sound on. iPhones only count the end of
+// a tap, so every kind of tap and key press is listened for.
 let audio = null;
-window.addEventListener('pointerdown', () => {
+
+function unlockAudio() {
   audio ??= new AudioContext();
-  audio.resume();
-});
+  return audio.resume();
+}
+
+function soundOn() {
+  return audio?.state === 'running';
+}
+
+for (const type of ['pointerdown', 'touchend', 'click', 'keydown']) {
+  window.addEventListener(type, unlockAudio);
+}
 
 function playSound(name) {
-  if (!audio || audio.state !== 'running' || !SOUNDS[name]) {
+  if (!soundOn() || !SOUNDS[name]) {
     return;
   }
   let at = audio.currentTime;
