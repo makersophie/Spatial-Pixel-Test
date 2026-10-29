@@ -35,32 +35,6 @@ html, body {
   margin: 0;
 }
 
-#modes {
-  position: absolute;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 6px;
-  padding: 6px;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.6);
-}
-
-#modes button {
-  font: 14px sans-serif;
-  padding: 8px 12px;
-  border: 0;
-  border-radius: 6px;
-  background: #333;
-  color: #fff;
-}
-
-#modes button.active {
-  background: #34c759;
-  color: #000;
-}
-
 .thanks img {
   display: block;
   width: 100%;

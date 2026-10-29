@@ -40,10 +40,5 @@ reaction right on the map, plus **GAME OVER** when a mouse meets the human, and 
 
 ## Zones: is an object inside the zone?
 
-The camera page has three zone modes (buttons at the bottom, or keys 1-3). Each zone is drawn as an
-outline: grey while empty, filled green while a card's centre is inside it.
-
-1. **Halves**: the left and right halves of the camera view.
-2. **QR zone**: four QR codes reading `zone:<name>` (print them from `zones.html` or `print/zones.pdf`)
-   mark the corners. Same-name markers are joined into a polygon in clockwise order.
-3. **Rooms**: the kitchen, mouse hole and living room on the map, located with the map's corner codes.
+The zones are the kitchen, mouse hole and living room on the map, located with the map's four corner
+codes. Each is drawn as an outline: grey while empty, filled green while a card's centre is inside it.

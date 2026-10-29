@@ -606,45 +606,22 @@ function whoIsIn(zone) {
 // ---------------------------------------------------------------------------
 // Zones
 //
-// "Is this object inside the zone?" Three ways to define a zone, switched
-// with the buttons at the bottom of the screen (or keys 1-3):
-//   halves  the left and right halves of the camera view.
-//   qr      four QR codes reading "zone:<name>" mark a zone's corners
-//           (print them from zones.html).
-//   rooms   the rooms on the floor plan, located with the map anchors.
-// Every zone becomes a polygon in frame coordinates. Its outline is grey
-// while it's empty and fills green once an object's centre is inside it.
+// "Is this object inside the zone?" The zones are the rooms on the floor
+// plan, located with the map anchors. Each becomes a polygon in frame
+// coordinates. Its outline is grey while it's empty and fills green once an
+// object's centre is inside it.
 // ---------------------------------------------------------------------------
 
-const ZONE_PREFIX = 'zone:';
-const ZONE_MODES = ['halves', 'qr', 'rooms'];
 const ZONE_EMPTY_COLOR = 'rgba(170, 170, 170, 0.95)';
 const ZONE_FULL_COLOR = '#34c759';
 const ZONE_FULL_FILL = 'rgba(52, 199, 89, 0.3)';
 
-let zoneMode = 'rooms';
-
-function isZoneMarker(text) {
-  return text.trim().toLowerCase().startsWith(ZONE_PREFIX);
-}
-
-// Anything that isn't part of the map or a zone's corner can be in a zone.
+// Anything that isn't part of the map can be in a zone.
 function isZoneObject(track) {
-  return !isMapAnchor(track.data) && !isZoneMarker(track.data);
+  return !isMapAnchor(track.data);
 }
 
 function currentZones() {
-  if (zoneMode === 'halves') {
-    const w = overlay.width;
-    const h = overlay.height;
-    return [
-      { name: 'LEFT', polygon: [{ x: 0, y: 0 }, { x: w / 2, y: 0 }, { x: w / 2, y: h }, { x: 0, y: h }] },
-      { name: 'RIGHT', polygon: [{ x: w / 2, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: w / 2, y: h }] },
-    ];
-  }
-  if (zoneMode === 'qr') {
-    return qrZones();
-  }
   if (!mapToFrame) {
     return [];
   }
@@ -652,35 +629,6 @@ function currentZones() {
     name: zone.name,
     polygon: rectCorners(zone).map((p) => applyHomography(mapToFrame, p)),
   }));
-}
-
-// Groups the "zone:<name>" markers by name. A zone appears once all four of
-// its corners are in view, joined in clockwise order around their centre.
-function qrZones() {
-  const corners = new Map();
-  for (const track of tracks) {
-    if (isZoneMarker(track.data)) {
-      const name = track.data.trim().slice(ZONE_PREFIX.length);
-      if (!corners.has(name)) {
-        corners.set(name, []);
-      }
-      corners.get(name).push(quadCenter(track.location));
-    }
-  }
-
-  const zones = [];
-  for (const [name, points] of corners) {
-    if (points.length !== 4) {
-      continue;
-    }
-    const cx = points.reduce((sum, p) => sum + p.x, 0) / 4;
-    const cy = points.reduce((sum, p) => sum + p.y, 0) / 4;
-    // y points down on screen, so increasing angle runs clockwise.
-    const polygon = [...points].sort((a, b) =>
-      Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx));
-    zones.push({ name, polygon });
-  }
-  return zones;
 }
 
 // Ray casting: count how many polygon edges a ray to the right crosses.
@@ -705,24 +653,6 @@ function rectCorners(rect) {
     { x: rect.x, y: rect.y + rect.height },
   ];
 }
-
-function setZoneMode(mode) {
-  zoneMode = mode;
-  for (const button of document.querySelectorAll('#modes button')) {
-    button.classList.toggle('active', button.dataset.mode === mode);
-  }
-}
-
-for (const button of document.querySelectorAll('#modes button')) {
-  button.addEventListener('click', () => setZoneMode(button.dataset.mode));
-}
-
-window.addEventListener('keydown', (event) => {
-  const mode = ZONE_MODES[Number(event.key) - 1];
-  if (mode) {
-    setZoneMode(mode);
-  }
-});
 
 // ---------------------------------------------------------------------------
 // Reactions
@@ -799,9 +729,7 @@ function render(now) {
   updateCalibration();
 
   overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
-  if (zoneMode === 'rooms') {
-    drawMap();
-  }
+  drawMap();
   const zones = currentZones();
   drawZones(zones);
 
@@ -822,12 +750,7 @@ function render(now) {
     drawBox(track.location, color);
     const name = track.card?.name ?? track.data;
     const zone = placeOnMap(track)?.zone;
-    // Rooms mode names the room (hallway included); the other modes name
-    // whichever of their zones the card is in.
-    const where = zoneMode === 'rooms'
-      ? zone
-      : zones.find((z) => pointInPolygon(track.center, z.polygon))?.name;
-    drawLabel(track.location, where ? `${name} @ ${where}` : name);
+    drawLabel(track.location, zone ? `${name} @ ${zone}` : name);
 
     const reaction = reactionFor(track, zone);
     const partnerShown = reaction?.shared &&
